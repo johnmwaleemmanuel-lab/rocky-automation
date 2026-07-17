@@ -1,6 +1,6 @@
 /**
  * Deriv Digit Trading Bot - Main Server
- * OAuth 2.0 + PKCE Authentication | WebSocket Manager | Trading Engine
+ * LEGACY OAuth Flow (works with existing App ID)
  * Version 2.0.0
  */
 
@@ -11,7 +11,6 @@ const WebSocket = require('ws');
 const fetch = require('node-fetch');
 const cors = require('cors');
 const path = require('path');
-const { v4: uuidv4 } = require('uuid');
 
 require('dotenv').config();
 
@@ -24,10 +23,7 @@ const PORT = process.env.PORT || 3000;
 const CONFIG = {
     DERIV_APP_ID: process.env.DERIV_APP_ID || '33QtvG4sVV4bjhAR2dqyL',
     DERIV_REDIRECT_URI: process.env.DERIV_REDIRECT_URI || 'https://rocky-automation.onrender.com/auth/deriv/callback',
-    DERIV_OAUTH_URL: process.env.DERIV_OAUTH_URL || 'https://oauth.deriv.com',
     DERIV_API_URL: process.env.DERIV_API_URL || 'wss://ws.derivws.com/websockets/v3',
-    DERIV_TOKEN_URL: 'https://oauth.deriv.com/oauth2/token',
-    DERIV_AUTHORIZE_URL: 'https://oauth.deriv.com/oauth2/authorize',
     SESSION_SECRET: process.env.SESSION_SECRET || 'deriv-bot-secret-' + crypto.randomBytes(32).toString('hex'),
 };
 
@@ -58,48 +54,11 @@ app.use(session({
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ============================================================
-// PKCE & OAUTH HELPERS
-// ============================================================
-function generateCodeVerifier() {
-    const length = 128;
-    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-    let verifier = '';
-    const randomBytes = crypto.randomBytes(length);
-    for (let i = 0; i < length; i++) {
-        verifier += possible[randomBytes[i] % possible.length];
-    }
-    return verifier;
-}
-
-function generateCodeChallenge(verifier) {
-    const hash = crypto.createHash('sha256').update(verifier).digest();
-    return hash.toString('base64')
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=/g, '');
-}
-
-function generateState() {
-    return crypto.randomBytes(32).toString('hex');
-}
-
-// ============================================================
 // IN-MEMORY STORES
 // ============================================================
-const pkceStore = new Map();
 const sessionStore = new Map();
 const wsConnections = new Map();
 const botStates = new Map();
-
-setInterval(() => {
-    const now = Date.now();
-    const expiry = 10 * 60 * 1000;
-    for (const [state, data] of pkceStore.entries()) {
-        if (now - data.createdAt > expiry) {
-            pkceStore.delete(state);
-        }
-    }
-}, 10 * 60 * 1000);
 
 // ============================================================
 // DERIV WEBSOCKET MANAGER
@@ -655,7 +614,6 @@ class TradingBot {
     }
 
     evaluateStrategy(strategy, ticks, distribution, bars, symbol) {
-        const lastTicks = ticks.slice(-10);
         const lastDigit = ticks[ticks.length - 1].digit;
 
         let result = { valid: false, strategy, symbol, confidence: 0, bars, distribution, lastDigit };
@@ -1228,32 +1186,27 @@ function stopBot(sessionId) {
 }
 
 // ============================================================
-// AUTHENTICATION ROUTES
+// AUTHENTICATION ROUTES - LEGACY OAUTH FLOW
 // ============================================================
+
+/**
+ * LEGACY OAuth: Redirect to Deriv with app_id
+ * After login, Deriv redirects back with tokens in query string
+ */
 app.get('/auth/deriv', (req, res) => {
     try {
-        const codeVerifier = generateCodeVerifier();
-        const codeChallenge = generateCodeChallenge(codeVerifier);
         const state = generateState();
-
-        pkceStore.set(state, {
-            code_verifier: codeVerifier,
-            code_challenge: codeChallenge,
-            createdAt: Date.now()
-        });
 
         const params = new URLSearchParams({
             app_id: CONFIG.DERIV_APP_ID,
-            response_type: 'code',
             redirect_uri: CONFIG.DERIV_REDIRECT_URI,
-            state: state,
-            code_challenge: codeChallenge,
-            code_challenge_method: 'S256'
+            state: state
         });
 
-        const authUrl = `${CONFIG.DERIV_AUTHORIZE_URL}?${params.toString()}`;
+        const authUrl = `https://oauth.deriv.com/oauth2/authorize?${params.toString()}`;
 
-        console.log(`[Auth] Redirecting to Deriv OAuth for session ${req.sessionID}`);
+        console.log(`[Auth] Redirecting to Deriv Legacy OAuth for session ${req.sessionID}`);
+        console.log(`[Auth] URL: ${authUrl}`);
         res.redirect(authUrl);
 
     } catch (err) {
@@ -1262,58 +1215,42 @@ app.get('/auth/deriv', (req, res) => {
     }
 });
 
+/**
+ * LEGACY OAuth Callback: Deriv redirects with tokens in query string
+ * Format: ?acct1=...&token1=...&cur1=...&acct2=...&token2=...
+ */
 app.get('/auth/deriv/callback', async (req, res) => {
-    const { code, state, error, error_description } = req.query;
-
-    if (error) {
-        console.error(`[Auth] OAuth error: ${error} - ${error_description}`);
-        return res.redirect('/?auth_error=' + encodeURIComponent(error_description || error));
-    }
-
-    if (!state || !pkceStore.has(state)) {
-        console.error('[Auth] Invalid or missing state parameter');
-        return res.redirect('/?auth_error=invalid_state');
-    }
-
-    const pkceData = pkceStore.get(state);
-    pkceStore.delete(state);
-
-    if (!code) {
-        console.error('[Auth] No authorization code received');
-        return res.redirect('/?auth_error=no_code');
-    }
+    console.log('[Auth] Legacy callback received');
+    console.log('[Auth] Query params:', req.query);
 
     try {
-        const tokenResponse = await fetch(CONFIG.DERIV_TOKEN_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: new URLSearchParams({
-                grant_type: 'authorization_code',
-                code: code,
-                redirect_uri: CONFIG.DERIV_REDIRECT_URI,
-                app_id: CONFIG.DERIV_APP_ID,
-                code_verifier: pkceData.code_verifier
-            }).toString()
-        });
+        // Legacy OAuth returns tokens directly in query params
+        // Format: ?acct1=CR123&token1=a1-xxx&cur1=USD&acct2=VRTC456&token2=a1-yyy&cur2=USD
+        const accounts = [];
+        let i = 1;
 
-        const tokenData = await tokenResponse.json();
-
-        if (!tokenResponse.ok || tokenData.error) {
-            console.error('[Auth] Token exchange failed:', tokenData.error_description || tokenData.error);
-            return res.redirect('/?auth_error=' + encodeURIComponent(tokenData.error_description || 'token_exchange_failed'));
+        while (req.query[`acct${i}`]) {
+            accounts.push({
+                account: req.query[`acct${i}`],
+                token: req.query[`token${i}`],
+                currency: req.query[`cur${i}`]
+            });
+            i++;
         }
 
-        const { access_token, refresh_token, expires_in, scope } = tokenData;
+        if (accounts.length === 0) {
+            console.error('[Auth] No accounts received in callback');
+            return res.redirect('/?auth_error=no_accounts');
+        }
 
-        console.log(`[Auth] Token received, expires in ${expires_in}s`);
+        console.log(`[Auth] Received ${accounts.length} accounts`);
+
+        // Use the first real account (not virtual) or the first account
+        const primaryAccount = accounts.find(a => !a.account.startsWith('VRTC') && !a.account.startsWith('VR')) || accounts[0];
 
         const sessionData = {
-            accessToken: access_token,
-            refreshToken: refresh_token,
-            tokenExpiresAt: Date.now() + (expires_in * 1000),
-            scope: scope,
+            accessToken: primaryAccount.token,
+            accounts: accounts,
             isAuthorized: false,
             accountInfo: null,
             loginTime: Date.now()
@@ -1321,18 +1258,19 @@ app.get('/auth/deriv/callback', async (req, res) => {
 
         sessionStore.set(req.sessionID, sessionData);
 
+        // Connect WebSocket and authorize
         const wsMgr = new DerivWebSocketManager(req.sessionID);
         wsConnections.set(req.sessionID, wsMgr);
 
         await wsMgr.connect();
-        const accountInfo = await wsMgr.authorize(access_token);
+        const accountInfo = await wsMgr.authorize(primaryAccount.token);
 
-        console.log(`[Auth] User ${accountInfo.loginid} fully authenticated`);
+        console.log(`[Auth] User ${accountInfo.loginid} fully authenticated via Legacy OAuth`);
 
         res.redirect('/?auth=success');
 
     } catch (err) {
-        console.error('[Auth] Callback processing error:', err.message);
+        console.error('[Auth] Legacy callback processing error:', err.message);
         res.redirect('/?auth_error=' + encodeURIComponent(err.message));
     }
 });
@@ -1347,11 +1285,8 @@ app.get('/api/auth/status', (req, res) => {
         });
     }
 
-    const isExpired = sessionData.tokenExpiresAt && Date.now() > sessionData.tokenExpiresAt;
-
     res.json({
-        isAuthenticated: sessionData.isAuthorized && !isExpired,
-        isExpired: isExpired,
+        isAuthenticated: sessionData.isAuthorized,
         accountInfo: sessionData.accountInfo,
         loginTime: sessionData.loginTime
     });
@@ -1446,6 +1381,7 @@ const server = app.listen(PORT, () => {
     console.log(`Deriv Digit Trading Bot v2.0.0`);
     console.log(`Server running on port ${PORT}`);
     console.log(`OAuth Redirect: ${CONFIG.DERIV_REDIRECT_URI}`);
+    console.log(`Using LEGACY OAuth Flow`);
     console.log(`============================================`);
 });
 
