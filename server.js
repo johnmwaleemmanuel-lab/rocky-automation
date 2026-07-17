@@ -18,6 +18,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ============================================================
+// PKCE & OAUTH HELPERS
+// ============================================================
+function generateState() {
+    return crypto.randomBytes(32).toString('hex');
+}
+
+// ============================================================
 // CONFIGURATION
 // ============================================================
 const CONFIG = {
