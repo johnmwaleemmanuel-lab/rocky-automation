@@ -26,8 +26,8 @@ const CONFIG = {
     DERIV_REDIRECT_URI: process.env.DERIV_REDIRECT_URI || 'https://digitaibot.onrender.com/auth/deriv/callback',
     DERIV_OAUTH_URL: process.env.DERIV_OAUTH_URL || 'https://oauth.deriv.com',
     DERIV_API_URL: process.env.DERIV_API_URL || 'wss://ws.derivws.com/websockets/v3',
-    DERIV_TOKEN_URL: 'https://oauth.deriv.com/oauth2/token',
-    DERIV_AUTHORIZE_URL: 'https://oauth.deriv.com/oauth2/authorize',
+    DERIV_TOKEN_URL: 'https://auth.deriv.com/oauth2/token',
+    DERIV_AUTHORIZE_URL: 'https://auth.deriv.com/oauth2/auth',
     SESSION_SECRET: process.env.SESSION_SECRET || 'deriv-bot-secret-' + crypto.randomBytes(32).toString('hex'),
 };
 
@@ -1334,13 +1334,13 @@ app.get('/auth/deriv', (req, res) => {
 
         // Build authorization URL
         const params = new URLSearchParams({
-            app_id: CONFIG.DERIV_APP_ID,
             response_type: 'code',
+            client_id: CONFIG.DERIV_APP_ID,
             redirect_uri: CONFIG.DERIV_REDIRECT_URI,
+            scope: 'trade account_manage',
             state: state,
             code_challenge: codeChallenge,
-            code_challenge_method: 'S256',
-            scope: 'read,trade,trading_information,admin'
+            code_challenge_method: 'S256'
         });
 
         const authUrl = `${CONFIG.DERIV_AUTHORIZE_URL}?${params.toString()}`;
@@ -1393,9 +1393,9 @@ app.get('/auth/deriv/callback', async (req, res) => {
             },
             body: new URLSearchParams({
                 grant_type: 'authorization_code',
+                client_id: CONFIG.DERIV_APP_ID,
                 code: code,
                 redirect_uri: CONFIG.DERIV_REDIRECT_URI,
-                client_id: CONFIG.DERIV_APP_ID,
                 code_verifier: pkceData.code_verifier
             }).toString()
         });
