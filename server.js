@@ -1340,7 +1340,8 @@ app.get('/auth/deriv', (req, res) => {
             scope: 'trade account_manage',
             state: state,
             code_challenge: codeChallenge,
-            code_challenge_method: 'S256'
+            code_challenge_method: 'S256',
+            app_id: CONFIG.DERIV_APP_ID
         });
 
         const authUrl = `${CONFIG.DERIV_AUTHORIZE_URL}?${params.toString()}`;
