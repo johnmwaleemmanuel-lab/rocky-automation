@@ -1,0 +1,26 @@
+{
+  "name": "deriv-digit-bot",
+  "version": "2.0.0",
+  "description": "Deriv Digit Trading Bot with OAuth 2.0 + PKCE and Advanced Strategies",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "express-session": "^1.17.3",
+    "crypto": "^1.0.1",
+    "ws": "^8.14.2",
+    "node-fetch": "^2.7.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
